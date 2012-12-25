@@ -44,6 +44,7 @@ setup(
             'dragline = dragline.core:main'
         ]
     },
-    #install_requires=[
-    #]
+    install_requires=[
+        'termcolor'
+    ]
 )
