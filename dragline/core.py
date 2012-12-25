@@ -71,10 +71,10 @@ class ActionHandler(object):
         raise NotImplementedError('no added method defined')
 
     def modified(self):
-        raise NotImplementedError('no added method defined')
+        raise NotImplementedError('no modified method defined')
 
     def removed(self):
-        raise NotImplementedError('no added method defined')
+        raise NotImplementedError('no removed method defined')
 
 
 class Dragline(object):
@@ -108,7 +108,7 @@ class Dragline(object):
 
         # assign values
         self.root = root
-        # NOTE is it nessessary to check path is legal or not ?
+        # NOTE is it nessessary to check whether path is legal or not ?
         self.ignores = ignores
         self.watches = watches
         #self.watches_handlers = watches_handlers
@@ -157,6 +157,9 @@ class Dragline(object):
             last_paths = current_paths
 
             time.sleep(float(self.interval) / 1000)
+
+    def trigger_all(self):
+        self.act({'added': self.get_paths()})
 
     def get_paths(self):
         paths = {}
@@ -233,7 +236,7 @@ class Dragline(object):
             ignores [...]
         """
 
-        def _rel_path(dirpath, name):
+        def get_rel_path(dirpath, name):
             rel_prefix = os.path.relpath(dirpath, self.root)
             if rel_prefix == '.':
                 return name
@@ -315,7 +318,7 @@ class Dragline(object):
             _filenames = []
             _filepaths = []
             for i in filenames:
-                rel_path = _rel_path(dirpath, i)
+                rel_path = get_rel_path(dirpath, i)
                 if check_file(rel_path):
                     _filenames.append(i)
                     _filepaths.append(rel_path)
@@ -331,7 +334,7 @@ class Dragline(object):
                 def react(dirpath, dirnames, filenames):
 
                     # filenames[:] = [i for i in filenames
-                    #                 if check_file(_rel_path(dirpath, i))]
+                    #                 if check_file(get_rel_path(dirpath, i))]
                     filenames, filepaths = check_files(filenames, dirpath)
                     return dirpath, dirnames, filenames, filepaths
             else:
@@ -343,7 +346,7 @@ class Dragline(object):
                 def react(dirpath, dirnames, filenames):
                     _dirnames = []
                     for i in dirnames:
-                        i_rel_path = _rel_path(dirpath, i)
+                        i_rel_path = get_rel_path(dirpath, i)
                         for j in allow_dirs:
                             if is_dir_family(j, i_rel_path):
                                 _dirnames.append(i)
@@ -351,7 +354,7 @@ class Dragline(object):
                     dirnames[:] = _dirnames
 
                     # filenames[:] = [i for i in filenames
-                    #                 if check_file(_rel_path(dirpath, i))]
+                    #                 if check_file(get_rel_path(dirpath, i))]
                     filenames, filepaths = check_files(filenames, dirpath)
                     #print 'filenames', filenames
                     return dirpath, dirnames, filenames, filepaths
@@ -364,10 +367,10 @@ class Dragline(object):
             def react(dirpath, dirnames, filenames):
                 dirnames[:] = [i for i in dirnames
                                if (not i in _dir_ignores
-                                   and not _rel_path(dirpath, i) in R.dirs)]
+                                   and not get_rel_path(dirpath, i) in R.dirs)]
 
                 # filenames[:] = [i for i in filenames
-                #                 if check_file(_rel_path(dirpath, i))]
+                #                 if check_file(get_rel_path(dirpath, i))]
                 filenames, filepaths = check_files(filenames, dirpath)
                 return dirpath, dirnames, filenames, filepaths
         else:
@@ -380,7 +383,7 @@ class Dragline(object):
                                if not i in _dir_ignores]
 
                 # filenames[:] = [i for i in filenames
-                #                 if check_file(_rel_path(dirpath, i))]
+                #                 if check_file(get_rel_path(dirpath, i))]
                 filenames, filepaths = check_files(filenames, dirpath)
                 return dirpath, dirnames, filenames, filepaths
 
@@ -450,9 +453,9 @@ def parse_path(root, path):
 
 def main():
     try:
-        root = sys.argv[1]
+        arg1 = sys.argv[1]
     except IndexError:
-        root = '.'
+        arg1 = None
 
     # try:
     import dragconfig as config
@@ -473,9 +476,12 @@ def main():
             logging.debug('%s affects' % k.upper())
             kwgs[k] = getattr(config, k.upper())
 
-    drag = Dragline(root, **kwgs)
+    drag = Dragline(os.getcwd(), **kwgs)
 
-    drag.start()
+    if arg1 == 'trigger_all':
+        drag.trigger_all()
+    else:
+        drag.start()
 
 
 if __name__ == '__main__':
