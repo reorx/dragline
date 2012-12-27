@@ -8,8 +8,8 @@ import os
 import re
 
 
-def run_command(cmd, *args, **kwargs):
-    #cmd_list = shlex.split(cmd_str)
+def run_command_str(cmd_str, *args, **kwargs):
+    cmd = shlex.split(cmd_str)
 
     p = sp.Popen(cmd, *args, **kwargs)
 
@@ -24,18 +24,21 @@ def add_tab(s):
     return s.replace('\n', '\n' + _print_tab)
 
 
-class Handler(object):
-    show_stdout = False
+class ActionHandler(object):
+    def __init__(self, dragline, dirpath, filename, filepath):
+        self.dragline = dragline
+        self.dirpath = dirpath
+        self.filename = filename
+        self.filepath = filepath
 
-    show_stderr = False
+    def added(self):
+        raise NotImplementedError('no added method defined')
 
-    def run_command(self, cmd, *args, **kwargs):
-        self.cmd = cmd
-        if not 'stdout' in kwargs:
-            kwargs['stdout'] = sp.PIPE
-        if not 'stderr' in kwargs:
-            kwargs['stderr'] = sp.PIPE
-        self.p = sp.Popen(cmd, *args, **kwargs)
+    def modified(self):
+        raise NotImplementedError('no modified method defined')
+
+    def removed(self):
+        raise NotImplementedError('no removed method defined')
 
     def mkdir(self, anypath):
         if not anypath:
@@ -53,8 +56,34 @@ class Handler(object):
     def rreplace(self, s, ori, sub):
         return re.sub('%s$' % ori, sub, s)
 
-    def log_command(self):
-        stdoutdata, stderrdata = self.p.communicate()
+
+class CommandHandler(ActionHandler):
+    show_stdout = False
+
+    show_stderr = False
+
+    def run_command(self, cmd, *args, **kwargs):
+        """
+        use subprocess.Popen to run command, but not asynchronous because it will wait for result
+        """
+        self.cmd = cmd
+        if self.dragline.debug:
+            print 'Command:', self.cmd
+            return
+
+        if not 'stdout' in kwargs:
+            kwargs['stdout'] = sp.PIPE
+        if not 'stderr' in kwargs:
+            kwargs['stderr'] = sp.PIPE
+        self.p = sp.Popen(cmd, *args, **kwargs)
+
+        self.stdoutdata, self.stderrdata = self.p.communicate()
+
+        self._log_command()
+
+    def _log_command(self):
+        if not hasattr(self, 'stdoutdata') or not hasattr(self, 'stderrdata'):
+            raise Exception('No attributes stdoutdata or stderrdata, check whether you have assigned them')
 
         if self.p.returncode == 0:
             prefix = termcolor.colored('[%s] ' % 'OK ', 'green')
@@ -67,35 +96,25 @@ class Handler(object):
         log = prefix + cmd_str
         print log
 
-        if self.show_stdout and stdoutdata:
+        if self.show_stdout and self.stdoutdata:
             print termcolor.colored(add_tab('Stdout:'), 'green', attrs=['bold'])
-            print add_tab(stdoutdata)
-        if self.show_stderr and stderrdata:
+            print add_tab(self.stdoutdata)
+        if self.show_stderr and self.stderrdata:
             print termcolor.colored(add_tab('Stderr:'), 'red', attrs=['bold'])
-            print add_tab(stderrdata)
+            print add_tab(self.stderrdata)
 
 
-class JadeHandler(Handler):
+class JadeHandler(CommandHandler):
     def jade(self, source, output):
         self.mkdir(output)
 
         cmd = 'jade < %s > %s' % (source, output)
-        #self.p = sp.Popen(self.cmd, shell=True)
         self.run_command(cmd, shell=True)
 
-        self.log_command()
 
-
-class StylusHandler(Handler):
-    show_stdout = False
-
-    show_stderr = False
-
+class StylusHandler(CommandHandler):
     def jade(self, source, output):
         self.mkdir(output)
 
         cmd = 'stylus < %s > %s' % (source, output)
-        #self.p = sp.Popen(self.cmd, shell=True)
         self.run_command(cmd, shell=True)
-
-        self.log_command()

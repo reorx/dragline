@@ -1,5 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+#
+# TODO
+#   * logging prettify, to instead print, [status] [datetime] message
+#   * scaning bar
 
 import os
 import sys
@@ -9,7 +13,7 @@ import logging
 import itertools
 import inspect
 
-from .handlers import run_command
+from .handlers import run_command_str
 
 
 logging.basicConfig(format='- %(message)s', level=logging.INFO)
@@ -26,6 +30,13 @@ logging.debug('dragline dirpath: %s' % _dragline_dirpath)
 logging.debug('dragline filenames: %s' % _dragline_filenames)
 logging.debug('dragline filepaths: %s' % _dragline_filepaths)
 
+TRIGGER_FLAG = {
+    '+': 'added',
+    '^': 'modified',
+    '-': 'removed'
+}
+
+get_mtime = lambda x: os.stat(x).st_mtime
 
 # `_dir_ignores` overlooks relative path
 # and only matches the name of directory
@@ -42,33 +53,10 @@ class EmptyClass(object):
     pass
 
 
-class PathObject(object):
-    def __init__(self, filepath):
-        self.dirname, self.filename = os.path.split(filepath)
-        self.filepath = filepath
-
-    def __str__(self):
-        return '<PathObject dirname=%s, filename=%s, filepath=%s>' % (self.dirname, self.filename, self.filepath)
-
-    def __repr__(self):
-        return self.__str__()
-
-
-class ActionHandler(object):
-    def added(self):
-        raise NotImplementedError('no added method defined')
-
-    def modified(self):
-        raise NotImplementedError('no modified method defined')
-
-    def removed(self):
-        raise NotImplementedError('no removed method defined')
-
-
 class Dragline(object):
 
     def __init__(self, ignores=[], watches=[], handlers=[], global_handler=None,
-                 interval=300, recursive=True):
+                 interval=300, recursive=True, debug=False):
         """
         possible keywork arguments:
             None
@@ -103,11 +91,13 @@ class Dragline(object):
         self.global_handler = global_handler
         self.interval = interval
         self.recursive = recursive
+        self.debug = debug
+        self.dragline_record = {}
 
         # make walk function
         self._make_walk_func()
 
-    def log_info(self, changes):
+    def log_changes(self, changes):
         log = 'Changes:\n'
         for t, l in changes.iteritems():
             if l:
@@ -116,12 +106,14 @@ class Dragline(object):
 
         logging.debug(log)
 
-    def get_record(self):
+    def get_record(self, pattern=None):
         record = {}
         for dirpath, dirnames, filenames, filepaths in self.walk():
             logging.debug('self.walk: %s, %s, %s, %s' % (dirpath, dirnames, filenames, filepaths))
             for i in filepaths:
-                record[i] = os.stat(i).st_mtime
+                if pattern and not fnmatch.fnmatch(i, pattern):
+                    continue
+                record[i] = get_mtime(i)
         return record
 
     def get_changes(self, record):
@@ -140,6 +132,24 @@ class Dragline(object):
 
         return changes, list(itertools.chain(*changes.itervalues()))
 
+    def reload_dragline(self):
+        print 'dragline package files changed, reload the process..\n'
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+        sys.exit(0)
+
+    def monitor_dragline(self):
+        record = {}
+        for i in _dragline_filepaths:
+            record[i] = get_mtime(i)
+
+        if self.dragline_record:
+            for filepath, mtime in record.iteritems():
+                if mtime != self.dragline_record[filepath]:
+                    self.reload_dragline()
+                    break
+        else:
+            self.dragline_record = record
+
     def start(self):
         """
         Start monitoring
@@ -153,18 +163,11 @@ class Dragline(object):
             logging.debug('changes: %s; changes_list: %s' % (changes, changes_list))
 
             if changes_list:
-                self.log_info(changes)
+                self.log_changes(changes)
 
-                # reload if dragline package changed
-                for i in changes_list:
-                    if i in _dragline_filepaths:
-                        print 'dragline package files changed, reload the process..\n'
-                        os.execv(sys.executable, [sys.executable] + sys.argv)
-                        sys.exit(0)
-
-                if not self.act is None:
+                if not self._execute is None:
                     logging.debug('Act on changes')
-                    self.act(changes)
+                    self._execute(changes)
             else:
                 logging.debug('no changes')
 
@@ -172,36 +175,45 @@ class Dragline(object):
 
             time.sleep(float(self.interval) / 1000)
 
-    def trigger_all(self):
-        self.act({'added': self.get_record()})
+    def trigger(self, action, pattern):
+        if pattern == 'all':
+            pattern = None
+        self._execute({TRIGGER_FLAG[action]: self.get_record(pattern)})
 
-    def act(self, changes):
+    def _execute(self, changes):
 
-        if self.handlers:
-            for status, filepaths in changes.iteritems():
-                for filepath in filepaths:
-                    hdr = self.get_handler(filepath)
-                    path = PathObject(filepath)
-                    if not hdr:
-                        continue
-                    if inspect.isclass(hdr):
-                        hdr_instance = hdr()
-                        getattr(hdr_instance, status)(path)
-                    elif inspect.isfunction(hdr):
-                        hdr(path)
-                    elif isinstance(hdr, (str, unicode)):
-                        run_command(hdr)
-                    else:
-                        raise Exception('Handler type error, %s' % type(hdr))
+        #if self.handlers:
+        for status, filepaths in changes.iteritems():
+            for filepath in filepaths:
+                #if self.debug:
+                    #print status, filepath
+                    #continue
+
+                hdr = self.get_handler(filepath)
+                if not hdr:
+                    continue
+                if inspect.isclass(hdr):
+                    hdr_instance = hdr(self, *self.get_handler_args(filepath))
+                    getattr(hdr_instance, status)()
+                elif inspect.isfunction(hdr):
+                    hdr(*self.get_handler_args(filepath))
+                elif isinstance(hdr, (str, unicode)):
+                    run_command_str(hdr)
+                else:
+                    raise Exception('Handler type error, %s' % type(hdr))
 
         if self.global_handler:
             hdr = self.global_handler
             if inspect.isfunction(hdr):
                 hdr()
             elif isinstance(hdr, (str, unicode)):
-                run_command(hdr)
+                run_command_str(hdr)
             else:
                 raise Exception('Handler type error, %s' % type(hdr))
+
+    def get_handler_args(self, filepath):
+        dirpath, filename = os.path.split(filepath)
+        return dirpath, filename, filepath
 
     def get_handler(self, path):
         for hdr in self.handlers:
@@ -301,7 +313,7 @@ class Dragline(object):
             t0 = time.time()
 
             # manually produce dragline package files for the first loop
-            yield _dragline_dirpath, [], _dragline_filenames, _dragline_filepaths
+            #yield _dragline_dirpath, [], _dragline_filenames, _dragline_filepaths
 
             # `dirpath` is absolute path iff dragline package files in the first loop
             # other times it is relative path without './' at the beginning
@@ -346,33 +358,45 @@ def get_relpath(dirpath, name):
     return os.path.relpath(os.path.join(dirpath, name), '.')
 
 
-def main():
-    try:
-        arg1 = sys.argv[1]
-    except IndexError:
-        arg1 = None
-
+def parse_config():
     sys.path.insert(0, os.getcwd())
     import dragconfig as config
 
-    kwgs = {
+    kwargs = {
         'ignores': [],
         'watches': [],
         'handlers': [],
         'global_handler': None,
         'interval': 300,
-        'recursive': True
+        'recursive': True,
+        'debug': False
     }
 
-    for k in kwgs:
+    for k in kwargs:
         if hasattr(config, k.upper()):
             logging.debug('%s affects' % k.upper())
-            kwgs[k] = getattr(config, k.upper())
+            kwargs[k] = getattr(config, k.upper())
+    return kwargs
 
-    drag = Dragline(**kwgs)
 
-    if arg1 == 'trigger_all':
-        drag.trigger_all()
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Monitor files and do relevant things')
+    parser.add_argument('-t', dest='trigger', nargs=2, metavar=('action', 'pattern'),
+                        help="trigger files that match the pattern,\
+                        with the action which + means added, ^ means modified, - means removed,\
+                        if pattern is 'all', all files will be triggered")
+    args = parser.parse_args()
+
+    if args.trigger and not args.trigger[0] in TRIGGER_FLAG:
+        raise argparse.ArgumentTypeError('first argument after -t should be one of %s' % ', '.join(TRIGGER_FLAG))
+
+    #sys.exit()
+    drag = Dragline(**parse_config())
+
+    if args.trigger:
+        drag.trigger(*tuple(args.trigger))
     else:
         drag.start()
 
