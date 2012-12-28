@@ -6,6 +6,7 @@ import subprocess as sp
 import shlex
 import os
 import re
+import codecs
 
 
 def run_command_str(cmd_str, *args, **kwargs):
@@ -24,12 +25,57 @@ def add_tab(s):
     return s.replace('\n', '\n' + _print_tab)
 
 
-class ActionHandler(object):
+class DependenceUnexist(Exception):
+    pass
+
+
+def check_python_dep(dep, clsname):
+    try:
+        __import__(dep)
+    except ImportError:
+        raise DependenceUnexist(
+            'Python module %s dependence is not satisfied on class %s' % (dep, clsname))
+
+
+def check_node_dep(dep, clsname):
+    jscode = 'require("%s")' % dep
+    rv = sp.call(['node', '-e', jscode], stdout=sp.PIPE, stderr=sp.PIPE)
+    if rv != 0:
+        raise DependenceUnexist(
+            'NodeJS module %s dependence is not satisfied on class %s' % (dep, clsname))
+
+
+class _DependentMeta(type):
+    def __new__(cls, name, bases, attrs):
+        """
+        Check dependences, currently support python and node(nodejs)
+        """
+        if 'DEPENDENCES' in attrs:
+            for env, packages in attrs['DEPENDENCES'].iteritems():
+                if 'python' == env:
+                    check = check_python_dep
+                elif 'node' == env:
+                    check = check_node_dep
+                for i in packages:
+                    check(i, name)
+        return type.__new__(cls, name, bases, attrs)
+
+
+class DependentClass(object):
+    __metaclass__ = _DependentMeta
+
+
+class ActionHandler(DependentClass):
     def __init__(self, dragline, dirpath, filename, filepath):
         self.dragline = dragline
         self.dirpath = dirpath
         self.filename = filename
         self.filepath = filepath
+
+        self.initialize()
+
+    def initialize(self):
+        pass
 
     def added(self):
         raise NotImplementedError('no added method defined')
@@ -55,6 +101,13 @@ class ActionHandler(object):
 
     def rreplace(self, s, ori, sub):
         return re.sub('%s$' % ori, sub, s)
+
+    def log(self, status, message, exc_info=None):
+        if status:
+            prefix = termcolor.colored('[%s] ' % 'OK ', 'green')
+        else:
+            prefix = termcolor.colored('[%s] ' % 'Err', 'red')
+        print prefix + message
 
 
 class CommandHandler(ActionHandler):
@@ -93,8 +146,7 @@ class CommandHandler(ActionHandler):
             cmd_str = ' '.join(self.cmd)
         else:
             cmd_str = self.cmd
-        log = prefix + cmd_str
-        print log
+        print prefix + cmd_str
 
         if self.show_stdout and self.stdoutdata:
             print termcolor.colored(add_tab('Stdout:'), 'green', attrs=['bold'])
@@ -104,17 +156,89 @@ class CommandHandler(ActionHandler):
             print add_tab(self.stderrdata)
 
 
-class JadeHandler(CommandHandler):
+class CompileHandler(ActionHandler):
+    _compiler = None
+
+    def initialize(self):
+        cls = self.__class__
+        cls._compiler = {
+            'compiler': cls.get_compiler()
+        }
+
+    def read_file(self, path):
+        f = codecs.open(path, 'r', 'utf8')
+        content = f.read()
+        f.close()
+        return content
+
+    def write_file(self, path, content):
+        #print repr(content)
+        f = codecs.open(path, 'w', 'utf8')
+        f.write(content)
+        f.close()
+
+    def get_compiler(self):
+        raise NotImplementedError
+
+    @property
+    def compiler(self):
+        return self.__class__._compiler['compiler']
+
+
+class StylusHandler(CompileHandler):
+    DEPENDENCES = {
+        'python': ['stylus'],
+        'node': ['nib', 'canvas', 'stylus']
+    }
+
+    plugins = []
+    compress = True
+    paths = []
+
+    @classmethod
+    def get_compiler(cls):
+        from stylus import Stylus
+        compiler = Stylus(compress=cls.compress,
+                          paths=cls.paths)
+        for i in cls.plugins:
+            compiler.use(i)
+        return compiler
+
+    def stylus(self, source, output):
+        self.mkdir(output)
+
+        self.write_file(output,
+                        self.compiler.compile(self.read_file(source)))
+        self.log(True, 'Stylus compiled: %s -> %s' % (source, output))
+
+
+class JadeHandler(CompileHandler):
+    DEPENDENCES = {
+        'python': ['pyjade'],
+        'node': ['jade']
+    }
+
+    template = 'django'
+
+    _support_templates = ['django', 'jinja', 'mako', 'tornado']
+
+    @classmethod
+    def get_compiler(cls):
+        from pyjade.utils import process
+        if not cls.template in cls._support_templates:
+            raise Exception('Template should be one of %s' % cls._support_templates)
+        try:
+            template_compiler = __import__('pyjade.ext.' + cls.template).Compiler
+        except Exception, e:
+            raise Exception('Import template compiler failed: %s' % e)
+
+        def _compiler(s):
+            return process(s, compiler=template_compiler)
+        return _compiler
+
     def jade(self, source, output):
         self.mkdir(output)
 
-        cmd = 'jade < %s > %s' % (source, output)
-        self.run_command(cmd, shell=True)
-
-
-class StylusHandler(CommandHandler):
-    def jade(self, source, output):
-        self.mkdir(output)
-
-        cmd = 'stylus < %s > %s' % (source, output)
-        self.run_command(cmd, shell=True)
+        self.write_file(output,
+                        self.compiler(self.read_file(source)))
+        self.log(True, 'Jade compiled: %s -> %s' % (source, output))
