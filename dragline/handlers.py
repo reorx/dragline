@@ -213,12 +213,17 @@ class StylusHandler(CompileHandler):
 
 
 class JadeHandler(CompileHandler):
+    """
+    Since the python implementation for jade - pyjade is not mature enough,
+    it is suggested to use this handler just for exporting jade to html,
+    not involving in productive situation.
+    """
     DEPENDENCES = {
         'python': ['pyjade'],
         'node': ['jade']
     }
 
-    template = 'django'
+    template = 'tornado'
 
     _support_templates = ['django', 'jinja', 'mako', 'tornado']
 
@@ -228,12 +233,12 @@ class JadeHandler(CompileHandler):
         if not cls.template in cls._support_templates:
             raise Exception('Template should be one of %s' % cls._support_templates)
         try:
-            template_compiler = __import__('pyjade.ext.' + cls.template).Compiler
+            template_compiler = __import__('pyjade.ext.' + cls.template, fromlist=['pyjade']).Compiler
         except Exception, e:
             raise Exception('Import template compiler failed: %s' % e)
 
         def _compiler(s):
-            return process(s, compiler=template_compiler)
+            return process(s, compiler=template_compiler, staticAttrs=True, extension='.html')
         return _compiler
 
     def jade(self, source, output):
