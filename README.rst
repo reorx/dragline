@@ -3,17 +3,17 @@ Dragline: File system automation guard
 ======================================
 
 
-Example:
+Usage:
 
-1. install dragline::
+1. Install dragline::
 
     python setup install
 
-   or just try without touch your dist-packages::
+   or just try without touching your dist-packages::
 
     python setup develop
 
-2. write a ``dragconfig.py`` file in the director you want to watch::
+2. Write a ``dragconfig.py`` file in the director you want to watch::
 
 
     #!/usr/bin/env python
@@ -79,6 +79,6 @@ Example:
 
     RECURSIVE = True
 
-3. run ``dragline``
+3. Run ``dragline``
 
 4. You are done, continue focusing on your work
