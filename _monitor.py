@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+#
+# The very old single file monitor, keep for reference
 
 import os
 import sys
